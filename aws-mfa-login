@@ -1,0 +1,44 @@
+#!/bin/bash -e
+
+mfa_arn=${1:-$AWS_MFA_ARN}
+# refresh every 8 hours (default lifetime is 12 hours)
+refresh=${2:-8}
+refresh_secs=$(($refresh*3600))
+
+now=$(date +%s)
+if [ -f $HOME/.aws-mfa-login.timestamp ] ; then
+    ts=$(<$HOME/.aws-mfa-login.timestamp)
+    age=$(($now-$ts))
+else
+    echo $now > $HOME/.aws-mfa-login.timestamp
+    age=0
+fi
+
+if [ $age -eq 0 -o $age -gt $refresh_secs ]; then
+    while true
+    do
+        code=$(osascript -e "tell app \"System Events\" to display dialog \"Please enter MFA code for $mfa_arn: \" default answer \"\"" -e 'text returned of result')
+        tokenjson=$(aws --profile default sts get-session-token --serial-number $mfa_arn --token-code $code)
+        if [ $? -eq 0 ]; then
+            access_key=$(echo $tokenjson | jq -r .Credentials.AccessKeyId)
+            secret_access_key=$(echo $tokenjson | jq -r .Credentials.SecretAccessKey)
+            session_token=$(echo $tokenjson | jq -r .Credentials.SessionToken)
+            cp $HOME/.aws/credentials $HOME/.aws/credentials.new
+            sed -i -e '/# BEGIN TEMPORARY CREDENTIALS/,/# END TEMPORARY CREDENTIALS/d' $HOME/.aws/credentials.new
+            cat >> $HOME/.aws/credentials.new <<EOF
+# BEGIN TEMPORARY CREDENTIALS
+[mfa]
+aws_access_key_id=$access_key
+aws_secret_access_key=$secret_access_key
+aws_session_token=$session_token
+# END TEMPORARY CREDENTIALS
+EOF
+            cp -p $HOME/.aws/credentials $HOME/.aws/credentials.old
+            mv $HOME/.aws/credentials.new $HOME/.aws/credentials
+            date +%s > $HOME/.aws-mfa-login.timestamp
+            break
+        fi
+    done 
+else
+    echo "Credentials are still valid."
+fi
