@@ -10,14 +10,17 @@ if [ -f $HOME/.aws-mfa-login.timestamp ] ; then
     ts=$(<$HOME/.aws-mfa-login.timestamp)
     age=$(($now-$ts))
 else
-    echo $now > $HOME/.aws-mfa-login.timestamp
     age=0
 fi
 
 if [ $age -eq 0 -o $age -gt $refresh_secs ]; then
     while true
     do
-        code=$(osascript -e "tell app \"System Events\" to display dialog \"Please enter MFA code for $mfa_arn: \" default answer \"\"" -e 'text returned of result')
+        if type osascript > /dev/null; then
+            code=$(osascript -e "tell app \"System Events\" to display dialog \"Please enter MFA code for $mfa_arn: \" default answer \"\"" -e 'text returned of result')
+        else
+            read -p "Please enter MFA code for $mfa_arn: " code
+        fi
         tokenjson=$(aws --profile default sts get-session-token --serial-number $mfa_arn --token-code $code)
         if [ $? -eq 0 ]; then
             access_key=$(echo $tokenjson | jq -r .Credentials.AccessKeyId)
